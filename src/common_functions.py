@@ -6,6 +6,7 @@ from typing import Tuple, Union
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sn
+import numpy as np
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
@@ -224,3 +225,36 @@ def load_pipeline(model_name: str, dataset_name: str) -> Pipeline:
     with open(pipeline_path, 'rb') as f:
         best_pipeline = pickle.load(f)
     return best_pipeline
+
+
+def add_eap_ep(train:pd.DataFrame,test:pd.DataFrame, y_col_name:str, best_pipeline_log_reg:Pipeline, cb_column: str) -> pd.DataFrame:
+    """
+    Adds the EAP column to the test set.
+    cb_column is de aggregated cost benefit, benefit - cost
+    
+    Parameters
+
+    
+
+
+    """
+
+
+    impute = SimpleImputer(strategy='median')
+    test[cb_column] = impute.fit_transform(
+        test[cb_column].to_frame())[:, 0]
+    test['prob_churn'] = best_pipeline_log_reg.predict_proba(test.drop(y_col_name, axis=1))[:, 1]
+
+    
+    counts = train[y_col_name].value_counts()
+    estimated_p_1 = counts.loc[1] / counts.sum()
+    estimated_p_0 = counts.loc[0] / counts.sum()
+
+
+    test_actual_label_0 = test.loc[test[y_col_name] == 0]
+    test_actual_label_0['EAP']= test_actual_label_0['prob_churn']*test_actual_label_0['FP']+(1-test_actual_label_0['prob_churn'])*test_actual_label_0['TN']
+    test_actual_label_0['EP'] = estimated_p_1*test_actual_label_0['FP']+estimated_p_0*test_actual_label_0['TN']
+    test_actual_label_1 = test.loc[test[y_col_name] == 1]
+    test_actual_label_1['EAP']= test_actual_label_1['prob_churn']*test_actual_label_1['TP']+(1-test_actual_label_1['prob_churn'])*test_actual_label_1['FN']
+    test_actual_label_1['EP']= estimated_p_1 *test_actual_label_1['TP']+ estimated_p_0 *test_actual_label_1['FN']
+    return pd.concat([test_actual_label_0, test_actual_label_1])
