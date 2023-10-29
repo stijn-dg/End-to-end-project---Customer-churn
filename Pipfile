@@ -120,6 +120,7 @@ widgetsnbextension = "==4.0.8"
 xgboost = "==1.7.6"
 
 [dev-packages]
+ipykernel = "*"
 
 [requires]
 python_version = "3.11"

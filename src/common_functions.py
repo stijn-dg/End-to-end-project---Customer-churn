@@ -1,7 +1,7 @@
 import pickle
 import re
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Tuple, Union, Literal
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -227,35 +227,185 @@ def load_pipeline(model_name: str, dataset_name: str) -> Pipeline:
     return best_pipeline
 
 
-def add_eap_ep(train:pd.DataFrame,test:pd.DataFrame, y_col_name:str, best_pipeline_log_reg:Pipeline, cb_column: str) -> pd.DataFrame:
+def add_cf_values(
+    df:pd.DataFrame, 
+    instance_dependent_cost_type:Literal['churn', 'fraud'] = 'churn',
+    cb_col_name:str="A") -> pd.DataFrame:
+    """
+    Adds the confusion matrix values to a dataframe.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The dataframe to add the values to.
+    instance_dependent_cost_type : Literal['churn', 'fraud'], optional
+        The type of instance dependent cost, by default 'churn'
+
+    Returns
+    -------
+    pd.DataFrame
+        The dataframe with the added values.
+    """
+    if instance_dependent_cost_type == 'churn':
+        df['TN'] = 0
+        df['FN'] = 12* df[cb_col_name]
+        df['FP'] = 2* df[cb_col_name] 
+        df['TP'] = 0 
+    else:
+        df['TN'] = 0
+        df['FN'] = -df[cb_col_name]/2000
+        df['FP'] = -1
+        df['TP'] = 0
+
+    return df
+
+
+def add_eap_ep(
+        train: pd.DataFrame, test: pd.DataFrame, y_col_name: str,
+        best_pipeline: Pipeline, cb_column: str,
+        model_name: str,
+        instance_dependent_cost_type:Literal["churn", "fraud"]="churn") -> pd.DataFrame:
     """
     Adds the EAP column to the test set.
     cb_column is de aggregated cost benefit, benefit - cost
-    
+
     Parameters
+    ----------
 
-    
+    train : pd.DataFrame
+        The train set.
+    test : pd.DataFrame
+        The test set.
+    y_col_name : str
+        The name of the target column.
+    cb_column : str
+        The name of the cost-benefit column.
+    model_name : str
+        The name of the model.
+    instance_dependent_cost_type : Literal["churn", "fraud"], optional
 
 
+    Returns
+    -------
+    pd.DataFrame
+        The test set with the EAP column.
     """
 
+    predicted_proba_col_name = f'y_predicted_proba_{model_name}'
 
-    impute = SimpleImputer(strategy='median')
-    test[cb_column] = impute.fit_transform(
-        test[cb_column].to_frame())[:, 0]
-    test['prob_churn'] = best_pipeline_log_reg.predict_proba(test.drop(y_col_name, axis=1))[:, 1]
-   
-
-    
     counts = train[y_col_name].value_counts()
     estimated_p_1 = counts.loc[1] / counts.sum()
     estimated_p_0 = counts.loc[0] / counts.sum()
 
+    # copy + add TN, FN, ...
+    test_copy = add_cf_values(
+        test.copy(deep=True),
+        instance_dependent_cost_type=instance_dependent_cost_type,
+        cb_col_name=cb_column)
 
-    test_actual_label_0 = test.loc[test[y_col_name] == 0]
-    test_actual_label_0['EAP']= test_actual_label_0['prob_churn']*test_actual_label_0['FP']+(1-test_actual_label_0['prob_churn'])*test_actual_label_0['TN']
+    test_actual_label_0 = test_copy.loc[test[y_col_name] == 0]
+    test_actual_label_0['EAP'] = test_actual_label_0[predicted_proba_col_name]*test_actual_label_0['FP'] + \
+        (1-test_actual_label_0[predicted_proba_col_name])*test_actual_label_0['TN']
     test_actual_label_0['EP'] = estimated_p_1*test_actual_label_0['FP']+estimated_p_0*test_actual_label_0['TN']
-    test_actual_label_1 = test.loc[test[y_col_name] == 1]
-    test_actual_label_1['EAP']= test_actual_label_1['prob_churn']*test_actual_label_1['TP']+(1-test_actual_label_1['prob_churn'])*test_actual_label_1['FN']
-    test_actual_label_1['EP']= estimated_p_1 *test_actual_label_1['TP']+ estimated_p_0 *test_actual_label_1['FN']
+    test_actual_label_1 = test_copy.loc[test[y_col_name] == 1]
+    test_actual_label_1['EAP'] = test_actual_label_1[predicted_proba_col_name]*test_actual_label_1['TP'] + \
+        (1-test_actual_label_1[predicted_proba_col_name])*test_actual_label_1['FN']
+    test_actual_label_1['EP'] = estimated_p_1 * test_actual_label_1['TP'] + estimated_p_0 * test_actual_label_1['FN']
     return pd.concat([test_actual_label_0, test_actual_label_1])
+
+
+def instance_dependent_cost_churn(prediction: int, encoded_true_label: int, a: float) -> float:
+    """
+    Calculates the instance-dependent cost for a single instance.
+
+    Parameters
+    ----------
+    prediction : int
+        The predicted label.
+    encoded_true_label : int
+        The true label.
+    a : float
+        The cost of a false positive.
+
+    Returns
+    -------
+    float
+        The instance-dependent cost.
+    """
+    if encoded_true_label == 1 and prediction == 1:  # True Positive (TP)
+        return 0
+    elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
+        return 2 * a
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+        return 0
+    elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
+        return 12 * a
+
+
+def compute_best_threshold(
+        test: pd.DataFrame, best_pipeline: str,
+        y_encoded_col_name: str, cb_column: str,
+        y_predicted_proba_col_name: str,
+        instance_dependent_cost_type: Literal['churn', 'fraud'] = 'churn') -> Tuple[float, float, float]:
+    """
+    Computes the best decision threshold for a given test set.
+
+    Parameters
+    ----------
+    test : pd.DataFrame
+        The test set.
+    best_pipeline : Pipeline
+        The best pipeline found by the grid search.
+    y_encoded_col_name : str
+        The name of the encoded target column.
+    cb_column : str
+        The name of the cost-benefit column.
+    y_predicted_proba_col_name : str
+        The name of the predicted probability column.
+
+    Returns
+    -------
+    float
+        The best decision threshold.
+    float
+        The lowest cost.
+
+    """
+
+    thresholds = np.linspace(0.01, 0.99, 99)
+
+    lowest_cost = float('inf')  # Initialize with positive infinity
+    best_threshold = None
+    total_costs = []  # Store total costs for each threshold
+
+    # impute = SimpleImputer(strategy='median')
+    # test_predictions[cb_column] = impute.fit_transform(
+    # (test_predictions[cb_column]).to_frame())[:, 0]
+
+    # TODO: define instance_dependent_cost_fraud
+    instance_dependent_cost_function = instance_dependent_cost_churn if instance_dependent_cost_type == 'churn' else instance_dependent_cost_fraud
+    for decision_threshold in thresholds:
+        test['instance_cost'] = test.apply(lambda row: instance_dependent_cost_function(
+            row[y_predicted_proba_col_name] >= decision_threshold, row[y_encoded_col_name], row[cb_column]), axis=1)
+
+        total_cost = test['instance_cost'].sum()
+        total_costs.append(total_cost)
+        print(f"Decision Threshold: {decision_threshold:.2f}, Test cost/loss = {total_cost:.2f}")
+
+        if total_cost < lowest_cost:
+            lowest_cost = total_cost
+            best_threshold = decision_threshold
+
+    AMC = lowest_cost / len(test)
+
+    # print(f"Best Decision Threshold: {best_threshold:.2f}, lowest_cost = {lowest_cost:.2f}" )
+    print(
+        f"Best Decision Threshold: {best_threshold:.2f}, Lowest Test cost/loss = {lowest_cost:.2f}, Lowest AMC = {AMC:.2f}")
+
+    plt.plot(thresholds, total_costs)
+    plt.xlabel('Decision Threshold')
+    plt.ylabel('Total Cost')
+    plt.title('Total Cost vs. Decision Threshold')
+    plt.show()
+
+    return best_threshold, AMC, lowest_cost
