@@ -244,6 +244,7 @@ def add_eap_ep(train:pd.DataFrame,test:pd.DataFrame, y_col_name:str, best_pipeli
     test[cb_column] = impute.fit_transform(
         test[cb_column].to_frame())[:, 0]
     test['prob_churn'] = best_pipeline_log_reg.predict_proba(test.drop(y_col_name, axis=1))[:, 1]
+   
 
     
     counts = train[y_col_name].value_counts()
