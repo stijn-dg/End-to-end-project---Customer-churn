@@ -253,8 +253,8 @@ def add_cf_values(
         df['TP'] = 0 
     else:
         df['TN'] = 0
-        df['FN'] = -df[cb_col_name]/2000
-        df['FP'] = -1
+        df['FN'] = df[cb_col_name]/2000
+        df['FP'] = 1
         df['TP'] = 0
 
     return df
@@ -264,7 +264,7 @@ def add_eap_ep(
         train: pd.DataFrame, test: pd.DataFrame, y_col_name: str,
         predicted_proba_col_name: str,
         best_pipeline: Pipeline, cb_column: str,
-        churn_label: str = "churn", 
+        churn_label: str,int = "churn", 
         instance_dependent_cost_type:Literal["churn", "fraud"]="churn") -> pd.DataFrame:
     """
     Adds the EAP column to the test set.
@@ -339,6 +339,21 @@ def instance_dependent_cost_churn(prediction: int, encoded_true_label: int, a: f
         return 0
     elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
         return 12 * a
+
+
+def instance_dependent_cost_fraud(prediction: int, encoded_true_label: int, a: float) -> float:
+    
+    
+    if encoded_true_label == 1 and prediction == 1:  # True Positive (TP)
+        return 0
+    elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
+        return 1
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+        return 0
+    elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
+        return  a/2000
+
+
 
 
 def compute_best_threshold(
