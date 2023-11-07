@@ -253,8 +253,8 @@ def add_cf_values(
         df['TP'] = 0 
     else:
         df['TN'] = 0
-        df['FN'] = -df[cb_col_name]/2000
-        df['FP'] = -1
+        df['FN'] = df[cb_col_name]/2000
+        df['FP'] = 1
         df['TP'] = 0
 
     return df
@@ -262,8 +262,9 @@ def add_cf_values(
 
 def add_eap_ep(
         train: pd.DataFrame, test: pd.DataFrame, y_col_name: str,
+        predicted_proba_col_name: str,
         best_pipeline: Pipeline, cb_column: str,
-        model_name: str,
+        churn_label: str,int = "churn", 
         instance_dependent_cost_type:Literal["churn", "fraud"]="churn") -> pd.DataFrame:
     """
     Adds the EAP column to the test set.
@@ -290,12 +291,10 @@ def add_eap_ep(
     pd.DataFrame
         The test set with the EAP column.
     """
-
-    predicted_proba_col_name = f'y_predicted_proba_{model_name}'
-
     counts = train[y_col_name].value_counts()
-    estimated_p_1 = counts.loc[1] / counts.sum()
-    estimated_p_0 = counts.loc[0] / counts.sum()
+    other_label = list(set(counts.index.to_list()).difference([churn_label]))[0]
+    estimated_p_1 = counts.loc[churn_label] / counts.sum()
+    estimated_p_0 = counts.loc[other_label] / counts.sum()
 
     # copy + add TN, FN, ...
     test_copy = add_cf_values(
@@ -303,11 +302,11 @@ def add_eap_ep(
         instance_dependent_cost_type=instance_dependent_cost_type,
         cb_col_name=cb_column)
 
-    test_actual_label_0 = test_copy.loc[test[y_col_name] == 0]
+    test_actual_label_0 = test_copy.loc[test[y_col_name] == other_label]
     test_actual_label_0['EAP'] = test_actual_label_0[predicted_proba_col_name]*test_actual_label_0['FP'] + \
         (1-test_actual_label_0[predicted_proba_col_name])*test_actual_label_0['TN']
     test_actual_label_0['EP'] = estimated_p_1*test_actual_label_0['FP']+estimated_p_0*test_actual_label_0['TN']
-    test_actual_label_1 = test_copy.loc[test[y_col_name] == 1]
+    test_actual_label_1 = test_copy.loc[test[y_col_name] == churn_label]
     test_actual_label_1['EAP'] = test_actual_label_1[predicted_proba_col_name]*test_actual_label_1['TP'] + \
         (1-test_actual_label_1[predicted_proba_col_name])*test_actual_label_1['FN']
     test_actual_label_1['EP'] = estimated_p_1 * test_actual_label_1['TP'] + estimated_p_0 * test_actual_label_1['FN']
@@ -340,6 +339,21 @@ def instance_dependent_cost_churn(prediction: int, encoded_true_label: int, a: f
         return 0
     elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
         return 12 * a
+
+
+def instance_dependent_cost_fraud(prediction: int, encoded_true_label: int, a: float) -> float:
+    
+    
+    if encoded_true_label == 1 and prediction == 1:  # True Positive (TP)
+        return 0
+    elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
+        return 1
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+        return 0
+    elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
+        return  a/2000
+
+
 
 
 def compute_best_threshold(
