@@ -229,7 +229,7 @@ def load_pipeline(model_name: str, dataset_name: str) -> Pipeline:
 
 def add_cf_values(
     df:pd.DataFrame, 
-    instance_dependent_cost_type:Literal['churn', 'fraud'] = 'churn',
+    instance_dependent_cost_type:Literal['churn', 'fraud','fraud_2'] = 'churn',
     cb_col_name:str="A") -> pd.DataFrame:
     """
     Adds the confusion matrix values to a dataframe.
@@ -251,6 +251,12 @@ def add_cf_values(
         df['FN'] = 12* df[cb_col_name]
         df['FP'] = 2* df[cb_col_name] 
         df['TP'] = 0 
+        
+    if instance_dependent_cost_type == 'fraud_2':    
+        df['TN'] = 0
+        df['FN'] = -df[cb_col_name]/2000
+        df['FP'] = -1
+        df['TP'] = 1
     else:
         df['TN'] = 0
         df['FN'] = df[cb_col_name]/2000
@@ -265,7 +271,7 @@ def add_eap_ep(
         predicted_proba_col_name: str,
         best_pipeline: Pipeline, cb_column: str,
         churn_label: str,int = "churn", 
-        instance_dependent_cost_type:Literal["churn", "fraud"]="churn") -> pd.DataFrame:
+        instance_dependent_cost_type:Literal["churn", "fraud", "fraud_2"]="churn") -> pd.DataFrame:
     """
     Adds the EAP column to the test set.
     cb_column is de aggregated cost benefit, benefit - cost
@@ -339,7 +345,17 @@ def instance_dependent_cost_churn(prediction: int, encoded_true_label: int, a: f
         return 0
     elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
         return 12 * a
-
+def instance_dependent_cost_fraud_2(prediction: int, encoded_true_label: int, a: float) -> float:
+    
+    
+    if encoded_true_label == 1 and prediction == 1:  # True Positive (TP)
+        return 1
+    elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
+        return -1
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+        return 0
+    elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
+        return  -a/2000
 
 def instance_dependent_cost_fraud(prediction: int, encoded_true_label: int, a: float) -> float:
     
@@ -360,7 +376,7 @@ def compute_best_threshold(
         test: pd.DataFrame, best_pipeline: str,
         y_encoded_col_name: str, cb_column: str,
         y_predicted_proba_col_name: str,
-        instance_dependent_cost_type: Literal['churn', 'fraud'] = 'churn') -> Tuple[float, float, float]:
+        instance_dependent_cost_type: Literal['churn', 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float]:
     """
     Computes the best decision threshold for a given test set.
 
@@ -397,7 +413,17 @@ def compute_best_threshold(
     # (test_predictions[cb_column]).to_frame())[:, 0]
 
     # TODO: define instance_dependent_cost_fraud
-    instance_dependent_cost_function = instance_dependent_cost_churn if instance_dependent_cost_type == 'churn' else instance_dependent_cost_fraud
+    # instance_dependent_cost_function = instance_dependent_cost_churn if instance_dependent_cost_type == 'churn' else instance_dependent_cost_fraud
+
+    if instance_dependent_cost_type == 'churn':
+        instance_dependent_cost_function = instance_dependent_cost_churn
+    
+    elif instance_dependent_cost_type == 'fraud_2':
+        instance_dependent_cost_function = instance_dependent_cost_fraud_2
+    
+    else:
+        instance_dependent_cost_function = instance_dependent_cost_fraud
+    
     for decision_threshold in thresholds:
         test['instance_cost'] = test.apply(lambda row: instance_dependent_cost_function(
             row[y_predicted_proba_col_name] >= decision_threshold, row[y_encoded_col_name], row[cb_column]), axis=1)
@@ -423,3 +449,90 @@ def compute_best_threshold(
     plt.show()
 
     return best_threshold, AMC, lowest_cost
+
+
+def compute_best_threshold_2(
+        test: pd.DataFrame, best_pipeline: str,
+        y_encoded_col_name: str, cb_column: str,
+        y_predicted_proba_col_name: str,
+        instance_dependent_cost_type: Literal['churn', 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float]:
+        """
+    Computes the best decision threshold for a given test set.
+
+    Parameters
+    ----------
+    test : pd.DataFrame
+        The test set.
+    best_pipeline : Pipeline
+        The best pipeline found by the grid search.
+    y_encoded_col_name : str
+        The name of the encoded target column.
+    cb_column : str
+        The name of the cost-benefit column.
+    y_predicted_proba_col_name : str
+        The name of the predicted probability column.
+
+    Returns
+    -------
+    float
+        The best decision threshold.
+    float
+        The lowest cost.
+
+    """
+    
+
+        thresholds = np.linspace(0.01, 0.99, 99)
+
+        lowest_cost = float('inf')  # Initialize with positive infinity
+        best_threshold = None
+        total_costs = []  # Store total costs for each threshold
+
+    # impute = SimpleImputer(strategy='median')
+    # test_predictions[cb_column] = impute.fit_transform(
+    # (test_predictions[cb_column]).to_frame())[:, 0]
+
+    # TODO: define instance_dependent_cost_fraud
+    # instance_dependent_cost_function = instance_dependent_cost_churn if instance_dependent_cost_type == 'churn' else instance_dependent_cost_fraud
+
+        if instance_dependent_cost_type == 'churn':
+            instance_dependent_cost_function = instance_dependent_cost_churn
+    
+        elif instance_dependent_cost_type == 'fraud_2':
+            instance_dependent_cost_function = instance_dependent_cost_fraud_2
+        
+        else:
+            instance_dependent_cost_function = instance_dependent_cost_fraud
+        
+        for decision_threshold in thresholds:
+            test['instance_cost'] = test.apply(lambda row: instance_dependent_cost_function(
+                row[y_predicted_proba_col_name] >= decision_threshold, row[y_encoded_col_name], row[cb_column]), axis=1)
+
+            total_cost = test['instance_cost'].sum()
+            total_costs.append(total_cost)
+            print(f"Decision Threshold: {decision_threshold:.2f}, Test cost/loss = {total_cost:.2f}")
+
+            if total_cost > lowest_cost:
+                lowest_cost = total_cost
+                best_threshold = decision_threshold
+
+        AMC = lowest_cost / len(test)
+
+        
+        print(f"Best Decision Threshold: {best_threshold:.2f}, Lowest Test cost/loss = {lowest_cost:.2f}, Lowest AMC = {AMC:.2f}")
+       
+            
+
+
+        # print(f"Best Decision Threshold: {best_threshold:.2f}, lowest_cost = {lowest_cost:.2f}" )
+        # print(
+        #     f"Best Decision Threshold: {best_threshold:.2f}, Lowest Test cost/loss = {lowest_cost:.2f}, Lowest AMC = {AMC:.2f}")
+
+        plt.plot(thresholds, total_costs)
+        plt.xlabel('Decision Threshold')
+        plt.ylabel('Total cost')
+        plt.title('Total cost vs. Decision Threshold')
+        plt.show()
+
+        return best_threshold, AMC, lowest_cost
+
