@@ -229,7 +229,7 @@ def load_pipeline(model_name: str, dataset_name: str) -> Pipeline:
 
 def add_cf_values(
     df:pd.DataFrame, 
-    instance_dependent_cost_type:Literal['churn', 'fraud','fraud_2'] = 'churn',
+    instance_dependent_cost_type:Literal['churn','churn_2', 'fraud','fraud_2'] = 'churn',
     cb_col_name:str="A") -> pd.DataFrame:
     """
     Adds the confusion matrix values to a dataframe.
@@ -252,7 +252,13 @@ def add_cf_values(
         df['FP'] = 2* df[cb_col_name] 
         df['TP'] = 0 
         
-    if instance_dependent_cost_type == 'fraud_2':    
+    elif instance_dependent_cost_type == 'churn_2':
+        df['TN'] = 0
+        df['FN'] = -12* df[cb_col_name]
+        df['FP'] = -2* df[cb_col_name] 
+        df['TP'] = 2* df[cb_col_name] 
+
+    elif instance_dependent_cost_type == 'fraud_2':    
         df['TN'] = 0
         df['FN'] = -df[cb_col_name]/2000
         df['FP'] = -1
@@ -271,7 +277,7 @@ def add_eap_ep(
         predicted_proba_col_name: str,
         best_pipeline: Pipeline, cb_column: str,
         churn_label: str,int = "churn", 
-        instance_dependent_cost_type:Literal["churn", "fraud", "fraud_2"]="churn") -> pd.DataFrame:
+        instance_dependent_cost_type:Literal["churn","churn_2", "fraud", "fraud_2"]="churn") -> pd.DataFrame:
     """
     Adds the EAP column to the test set.
     cb_column is de aggregated cost benefit, benefit - cost
@@ -341,10 +347,26 @@ def instance_dependent_cost_churn(prediction: int, encoded_true_label: int, a: f
         return 0
     elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
         return 2 * a
-    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)
         return 0
     elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
         return 12 * a
+
+
+
+def instance_dependent_cost_churn_2(prediction: int, encoded_true_label: int, a: float) -> float:
+    
+
+    if encoded_true_label == 1 and prediction == 1:  # True Positive (TP)
+        return 2 * a
+    elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
+        return -2 * a
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)
+        return 0
+    elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
+        return -12 * a
+
+
 def instance_dependent_cost_fraud_2(prediction: int, encoded_true_label: int, a: float) -> float:
     
     
@@ -352,7 +374,7 @@ def instance_dependent_cost_fraud_2(prediction: int, encoded_true_label: int, a:
         return 1
     elif encoded_true_label == 0 and prediction == 1:  # False Positive (FP)
         return -1
-    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)0
+    elif encoded_true_label == 0 and prediction == 0:  # True Negative (TN)
         return 0
     elif encoded_true_label == 1 and prediction == 0:  # False Negative (FN)
         return  -a/2000
@@ -376,7 +398,7 @@ def compute_best_threshold(
         test: pd.DataFrame, best_pipeline: str,
         y_encoded_col_name: str, cb_column: str,
         y_predicted_proba_col_name: str,
-        instance_dependent_cost_type: Literal['churn', 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float]:
+        instance_dependent_cost_type: Literal['churn', 'churn_2' , 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float,float]:
     """
     Computes the best decision threshold for a given test set.
 
@@ -417,6 +439,9 @@ def compute_best_threshold(
 
     if instance_dependent_cost_type == 'churn':
         instance_dependent_cost_function = instance_dependent_cost_churn
+
+    elif instance_dependent_cost_type == 'churn_2':
+        instance_dependent_cost_function = instance_dependent_cost_churn_2
     
     elif instance_dependent_cost_type == 'fraud_2':
         instance_dependent_cost_function = instance_dependent_cost_fraud_2
@@ -455,7 +480,9 @@ def compute_best_threshold_2(
         test: pd.DataFrame, best_pipeline: str,
         y_encoded_col_name: str, cb_column: str,
         y_predicted_proba_col_name: str,
-        instance_dependent_cost_type: Literal['churn', 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float]:
+        cost_is_positive : bool = True,
+        instance_dependent_cost_type: Literal['churn','churn_2', 'fraud', 'fraud_2'] = 'churn') -> Tuple[float, float, float,float]:
+       
         """
     Computes the best decision threshold for a given test set.
 
@@ -483,8 +510,8 @@ def compute_best_threshold_2(
     
 
         thresholds = np.linspace(0.01, 0.99, 99)
-
-        lowest_cost = float('inf')  # Initialize with positive infinity
+        
+        lowest_cost = float('-inf') if cost_is_positive else float('inf') # Initialize with positive infinity
         best_threshold = None
         total_costs = []  # Store total costs for each threshold
 
@@ -497,6 +524,9 @@ def compute_best_threshold_2(
 
         if instance_dependent_cost_type == 'churn':
             instance_dependent_cost_function = instance_dependent_cost_churn
+
+        elif instance_dependent_cost_type == 'churn_2':
+            instance_dependent_cost_function = instance_dependent_cost_churn_2
     
         elif instance_dependent_cost_type == 'fraud_2':
             instance_dependent_cost_function = instance_dependent_cost_fraud_2
