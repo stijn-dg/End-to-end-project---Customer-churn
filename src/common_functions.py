@@ -1,7 +1,8 @@
 import pickle
 import re
 from pathlib import Path
-from typing import Tuple, Union, Literal
+from typing import Tuple, Union, Literal, List
+import logging
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -14,11 +15,13 @@ from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import PrecisionRecallDisplay, confusion_matrix
+from sklearn.utils.class_weight import compute_class_weight
 from sklearn.model_selection import (
     GridSearchCV, RandomizedSearchCV, StratifiedShuffleSplit)
 # from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (LabelEncoder, OneHotEncoder, OrdinalEncoder,
                                    StandardScaler)
+
 
 
 def to_snake_case(name: str) -> str:
@@ -68,7 +71,9 @@ def build_column_transformer_for_df(train_x: pd.DataFrame) -> ColumnTransformer:
     return transformer
 
 
-def build_sklearn_pipeline(df: pd.DataFrame, y_col_name: str, model_name: str, model: object, transformer: ColumnTransformer = None) -> Pipeline:
+def build_sklearn_pipeline(
+    df: pd.DataFrame, y_col_name: str, model_name: str, model: object, transformer: ColumnTransformer = None,
+    step_names_to_remove:List[str]=[]) -> Pipeline:
     """Builds a sklearn pipeline for churn prediction."""
     # Define the steps
     if transformer == None:
@@ -82,6 +87,11 @@ def build_sklearn_pipeline(df: pd.DataFrame, y_col_name: str, model_name: str, m
         ('pca', PCA()),
         (model_name, model)
     ]
+
+    steps = list(filter(lambda step: step[0] not in set(step_names_to_remove), steps))
+
+    logging.info(f"The remaining steps are {steps}.")
+
     # Create the pipeline
     pipeline = Pipeline(steps=steps)
     return pipeline
@@ -92,12 +102,13 @@ def sklearn_gridsearch_using_pipeline(
         model_name: str, model: object,
         fit_le: LabelEncoder, param_grid: dict,
         verbose: int, randomized: bool = False,
-        n_folds: int = 5, pipeline: Pipeline = None) -> Union[GridSearchCV, RandomizedSearchCV]:
+        n_folds: int = 5, pipeline: Pipeline = None,
+        step_names_to_remove:List[str]=[]) -> Union[GridSearchCV, RandomizedSearchCV]:
     """Performs a (randomized) grid search using a sklearn pipeline."""
     # Get the pipeline
     if pipeline == None:
         pipeline = build_sklearn_pipeline(
-            train, y_col_name=y_col_name, model=model, model_name=model_name)
+            train, y_col_name=y_col_name, model=model, model_name=model_name, step_names_to_remove=step_names_to_remove)
 
     # define stratiefied shuffle split:
     sss = StratifiedShuffleSplit(
@@ -111,8 +122,8 @@ def sklearn_gridsearch_using_pipeline(
     param_grid = param_grid
     default_param_grid = {
         "pca__n_components": default_pca_n_components,
-        "under__sampling_strategy": default_undesampling_rates,
-        "over__sampling_strategy": default_oversampling_rates
+        # "under__sampling_strategy": default_undesampling_rates,
+        # "over__sampling_strategy": default_oversampling_rates
     }
 
     for param in default_param_grid.keys():
